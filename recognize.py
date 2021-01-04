@@ -24,9 +24,16 @@ for imagePath in sorted(list(paths.list_images(args["images"]))):
 
     # loop over the license plates regions an draw the bounding box surronding the 
     # license plate
-    for lpbox in plates:
+    for (i, (lp, lpbox)) in enumerate(plates):
         lpbox = np.array(lpbox).reshape((-1, 1, 2)).astype(np.int32)
         cv2.drawContours(image, [lpbox], -1, (0, 255, 0), 2)
+
+        # show the output images 
+        candidates = np.dstack([lp.candidates] * 3)
+        thresh = np.dstack([lp.thresh] * 3)
+        output = np.vstack([lp.plate, thresh, candidates])
+        cv2.imshow("Plate and Candidates #{}".format(i + 1), output)
     
     cv2.imshow("image", image)
     cv2.waitKey(0)
+    cv2.destroyAllWindows()
