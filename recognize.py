@@ -1,4 +1,4 @@
-from pyimagesearch.license_plate.licenseplate import LicensePlateDetector
+from ANPR.license_plate.licenseplate import LicensePlateDetector
 from imutils import paths
 import numpy as np
 import argparse
