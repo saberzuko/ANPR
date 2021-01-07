@@ -22,18 +22,21 @@ class LicensePlateDetector:
 		self.minCharW = minCharW
 
 	def detect(self):
-		# detect and return the license plate regions in the image
+		# detect license plate regions in the image
 		lpRegions = self.detectPlates()
-
+ 
 		# loop over the license plate regions
 		for lpRegion in lpRegions:
-			# detect character candiadates in the current license plate region
+			# detect character candidates in the current license plate region
 			lp = self.detectCharacterCandidates(lpRegion)
-
-			# only continue if characters were succesfully detected
+ 
+			# only continue if characters were successfully detected
 			if lp.success:
-				# yield a tuple of the license plate object and bounding box
-				yield (lp, lpRegion)
+				# scissor the candidates into characters
+				chars = self.scissor(lp)
+ 
+				# yield a tuple of the license plate region and the characters
+				yield (lpRegion, chars)
 
 	def detectPlates(self):
 		# initialize the rectangular and square kernels to be applied to the image,
@@ -167,8 +170,89 @@ class LicensePlateDetector:
 		# clear pixels that touch the borders of the character candidates mask and detect
 		# contours in the candidates mask
 		charCandidates = segmentation.clear_border(charCandidates)
+		cnts = cv2.findContours(charCandidates.copy(), cv2.RETR_EXTERNAL,
+			cv2.CHAIN_APPROX_SIMPLE)
+		cnts = imutils.grab_contours(cnts)
+		cv2.imshow("Original Candidates", charCandidates)
+ 
+		# if there are more character candidates than the supplied number, then prune
+		# the candidates
+		if len(cnts) > self.numChars:
+			(charCandidates, cnts) = self.pruneCandidates(charCandidates, cnts)
+			cv2.imshow("Pruned Canidates", charCandidates)
+ 
+		# take bitwise AND of raw thresholded image and character candidates to get a more
+		# clean segmentation of the characters
+		thresh = cv2.bitwise_and(thresh, thresh, mask=charCandidates)
+		cv2.imshow("Char Threshold", thresh)
  
 		# return the license plate region object containing the license plate, the thresholded
 		# license plate, and the character candidates
 		return LicensePlate(success=True, plate=plate, thresh=thresh,
 			candidates=charCandidates)
+		
+	def pruneCandidates(self, charCandidates, cnts):
+		# initialize the pruned candidates mask and the list of dimensions
+		prunedCandidates = np.zeros(charCandidates.shape, dtype="uint8")
+		dims = []
+ 
+		# loop over the contours
+		for c in cnts:
+			# compute the bounding box for the contour and update the list of dimensions
+			(boxX, boxY, boxW, boxH) = cv2.boundingRect(c)
+			dims.append(boxY + boxH)
+ 
+		# convert the dimensions into a NumPy array and initialize the list of differences
+		# and selected contours
+		dims = np.array(dims)
+		diffs = []
+		selected = []
+ 
+		# loop over the dimensions
+		for i in range(0, len(dims)):
+			# compute the sum of differences between the current dimension and and all other
+			# dimensions, then update the differences list
+			diffs.append(np.absolute(dims - dims[i]).sum())
+ 
+		# find the top number of candidates with the most similar dimensions and loop over
+		# the selected contours
+		for i in np.argsort(diffs)[:self.numChars]:
+			# draw the contour on the pruned candidates mask and add it to the list of selected
+			# contours
+			cv2.drawContours(prunedCandidates, [cnts[i]], -1, 255, -1)
+			selected.append(cnts[i])
+ 
+		# return a tuple of the pruned candidates mask and selected contours
+		return (prunedCandidates, selected)
+	
+	def scissor(self, lp):
+		# detect contours in the candidates and initialize the list of bounding boxes and
+		# list of extracted characters
+		cnts = cv2.findContours(lp.candidates.copy(), cv2.RETR_EXTERNAL,
+			cv2.CHAIN_APPROX_SIMPLE)
+		cnts = imutils.grab_contours(cnts)
+		boxes = []
+		chars = []
+ 
+		# loop over the contours
+		for c in cnts:
+			# compute the bounding box for the contour while maintaining the minimum width
+			(boxX, boxY, boxW, boxH) = cv2.boundingRect(c)
+			dX = min(self.minCharW, self.minCharW - boxW) // 2
+			boxX -= dX
+			boxW += (dX * 2)
+ 
+			# update the list of bounding boxes
+			boxes.append((boxX, boxY, boxX + boxW, boxY + boxH))
+ 
+		# sort the bounding boxes from left to right
+		boxes = sorted(boxes, key=lambda b:b[0])
+ 
+		# loop over the started bounding boxes
+		for (startX, startY, endX, endY) in boxes:
+			# extract the ROI from the thresholded license plate and update the characters
+			# list
+			chars.append(lp.thresh[startY:endY, startX:endX])
+ 
+		# return the list of characters
+		return chars
